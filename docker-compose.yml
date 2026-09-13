@@ -1,0 +1,52 @@
+networks:
+  agent_internal:
+    driver: bridge
+
+volumes:
+  openclaw_data:
+  openclaw_workspace:
+  ollama_models:
+
+services:
+  # 1. The Environment / Client
+  openclaw-gateway:
+    image: ghcr.io/openclaw/openclaw:latest
+    container_name: openclaw_agent
+    networks:
+      - agent_internal
+    ports:
+      - "127.0.0.1:18789:18789"
+    env_file: .env
+    volumes:
+      - openclaw_data:/home/node/.openclaw
+      - openclaw_workspace:/home/node/.openclaw/workspace
+    command: node openclaw.mjs gateway --allow-unconfigured
+    restart: unless-stopped
+
+  # 2. The Policy Server (Serving inference via CPU/RAM)
+  policy_server:
+    image: ollama/ollama:latest
+    container_name: policy_server
+    networks:
+      - agent_internal
+    environment:
+      - OLLAMA_NUM_CTX=${OLLAMA_NUM_CTX}
+    volumes:
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+
+  # 3. The Process Reward Model (The Judge)
+  prm_server:
+    build: ./mock_prm  
+    container_name: prm_server
+    networks:
+      - agent_internal
+    restart: unless-stopped
+
+  # 4. The Training Engine (The Optimizer)
+  trainer_engine:
+    build: ./mock_trainer  
+    container_name: trainer_engine
+    networks:
+      - agent_internal
+    restart: unless-stopped
