@@ -1,3 +1,5 @@
+![AI Generated](https://img.shields.io/badge/AI%20Generated-Gemini-blue?style=for-the-badge)
+
 # OpenClaw-RL Local Proof-of-Concept
 
 ## 1. Information of the POC
@@ -18,7 +20,22 @@ This is how it is supposed to work
 
 <img src="images/frist architecture image.png" style="width:650px;">
 
+Project structure:
 
+   ```text
+   openclaw-rl/
+   ├── .env
+   ├── docker-compose.yml
+   ├── README.md
+   ├── mock_prm/
+   │   ├── Dockerfile
+   │   ├── main.py
+   │   └── requirements.txt
+   └── mock_trainer/
+       ├── Dockerfile
+       ├── train.py
+       └── requirements.txt
+   ```
 
 ## 2. Scope
 **In-Scope:**
@@ -54,6 +71,12 @@ This is how it is supposed to work
     docker exec -it policy_server ollama pull qwen2.5:1.5b
     ```
 
+### Why Qwen2.5 0.5B is the best choice for your setup:
+
+- CPU-Optimized: Your machine relies on an Intel CPU with no dedicated NVIDIA GPU. Models with billions of parameters will freeze your system. At only 0.5 billion parameters, Qwen is exceptionally lightweight and will run smoothly on your hardware.
+- Low Memory Footprint: The quantized qwen2.5:0.5b model takes up less than 400 MB of RAM, leaving plenty of system resources for your Docker containers, WSL environment, and Windows host.
+- Agentic Capabilities: Despite its tiny size, Qwen 2.5 possesses strong instruction-following capabilities and was specifically trained to understand structured outputs (like JSON) and code generation. This is critical, as OpenClaw relies on JSON to execute tool calls.
+
 ## 4. How to Use
 
 ### Accessing the Agent
@@ -82,8 +105,25 @@ Because the architecture runs asynchronously, you must tail the logs of the indi
     docker logs -f trainer_engine
     ```
 
+## 5. Troubleshooting & Diagnostics
+
+### Inference Route Error
+If OpenClaw displays an inference route error banner:
+
+* Check that the model is pulled inside the container using `docker exec -it policy_server ollama list`.
+* Ensure `OLLAMA_HOST` is set to `http://policy_server:11434` (do not append `/v1`, as OpenAI-compatible routing breaks OpenClaw tool-calling).
+* Ensure `OLLAMA_API_KEY=ollama-local` is defined in `.env` to satisfy OpenClaw auth checks.
+
+### Role Confusion & Context Dilution
+
+OpenClaw injects ~10,000 tokens of system prompts and tool schemas into every request:
+
+* Models smaller than 1B parameters (`qwen2.5:0.5b`) will suffer from context saturation, hallucinate identities, or fail basic instructions.
+* Upgrading to `qwen2.5:1.5b` or `qwen2.5:3b` resolves prompt retention issues while maintaining viable CPU execution speeds.
 
 ## First Results
+
+TL;DR
 
 The chat does not go very well; we can see the responses are bad
 
@@ -92,3 +132,46 @@ The chat does not go very well; we can see the responses are bad
 but we do prove that we have an online training
 
 <img src="images/docker-policy-trainer.png" style="width:650px;">
+
+(Assessement from Gemini)
+
+Technically, your entire proof-of-concept stack is working: OpenClaw connects to Ollama over the native API (/api/chat returns 200 OK), and the training engine runs its asynchronous LoRA updates in the background.
+
+The breakdown in the chat is caused by context overload on a 0.5B model.
+
+What Is Happening:
+
+- Context Dilution: As shown in the logs (task.n_tokens = 10659), OpenClaw injects a massive ~10,600-token system prompt detailing its internal architecture and cataloging 51 tools.
+
+- Capacity Limit: A 0.5-billion parameter model does not have the attention capacity to retain basic conversational context (like who is "Nick" and who is "Rob") when buried under 10,000 tokens of agent instructions. It becomes confused and hallucinates role assignments.
+
+- Read-Only Mode (_intentionally_): The shield icon at the bottom left indicates the agent is in Read Only mode, meaning tool execution and write operations are restricted in the session.
+
+How to Fix This:
+
+The fix is to swap the policy model to a slightly larger, instruction-tuned model that can track state across large agent prompts while remaining lightweight enough to run smoothly on CPU.
+
+1. Pull a 1.5B or 3B Model
+In your WSL terminal, pull qwen2.5:1.5b (or qwen2.5:3b if you have at least 8 GB of free system RAM):
+
+```bash
+docker exec -it policy_server ollama pull qwen2.5:1.5b
+```
+
+Verification: Wait for the layers to finish downloading and confirm Ollama outputs success.
+
+2. Update the Model in the Web UI
+
+Click the model dropdown at the bottom right of the chat (where it currently says qwen2.5:0.5b).
+
+Switch it to qwen2.5:1.5b.
+
+Start a fresh conversation thread using the + (New Chat) button so the context resets cleanly.
+
+3. Enable Agent Actions (Optional)
+
+If you want the agent to execute real commands and generate state signals for your PRM judge:
+
+Click the Read Only shield button in the bottom-left prompt toolbar.
+
+Switch the workspace execution permissions to allow the agent to run commands or write files inside its isolated Docker workspace.
